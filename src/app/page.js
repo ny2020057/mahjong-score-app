@@ -39,13 +39,6 @@ function calcGameResult(entries) {
 }
 
 export default function MahjongApp() {
-  // 認証・状態管理
-  const [user, setUser] = useState(null);
-  const [email, setEmail] = useState("");
-  const [password, setPassword] = useState("");
-  const [authError, setAuthError] = useState("");
-  const [loading, setLoading] = useState(true);
-
   const [activeTab, setActiveTab] = useState("入力");
   const [players, setPlayers] = useState(DEFAULT_NAMES);
   const [games, setGames] = useState([]);
@@ -54,25 +47,10 @@ export default function MahjongApp() {
   const [gameNo, setGameNo] = useState("1");
   const [editPlayerIdx, setEditPlayerIdx] = useState(null);
   const [editPlayerName, setEditPlayerName] = useState("");
+  const [loading, setLoading] = useState(true);
 
-  // 1. ログイン状態の監視
-  useEffect(() => {
-    supabase.auth.getSession().then(({ data: { session } }) => {
-      setUser(session?.user ?? null);
-      setLoading(false);
-    });
-
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
-      setUser(session?.user ?? null);
-    });
-
-    return () => subscription.unsubscribe();
-  }, []);
-
-  // 2. Supabaseからデータ（プレイヤー・対局履歴）を取得
+  // Supabaseからデータ（プレイヤー・対局履歴）を取得
   const fetchData = useCallback(async () => {
-    if (!user) return;
-    
     // プレイヤー名取得
     const { data: stateData } = await supabase.from("app_state").select("*").eq("key", "players").single();
     if (stateData) setPlayers(stateData.value);
@@ -92,34 +70,21 @@ export default function MahjongApp() {
         setGameNo(String(maxNo + 1));
       }
     }
-  }, [user, gameDate]);
+    setLoading(false);
+  }, [gameDate]);
 
   useEffect(() => {
     fetchData();
   }, [fetchData]);
 
-  // 3. Supabaseのリアルタイム同期設定
+  // リアルタイム同期設定（誰かが更新したら一瞬で全員の画面に反映される）
   useEffect(() => {
-    if (!user) return;
     const channel = supabase.channel("schema-db-changes")
       .on("postgres_changes", { event: "*", schema: "public", table: "games" }, () => { fetchData(); })
       .on("postgres_changes", { event: "*", schema: "public", table: "app_state" }, () => { fetchData(); })
       .subscribe();
     return () => { supabase.removeChannel(channel); };
-  }, [user, fetchData]);
-
-  // ログイン処理
-  const handleLogin = async (e) => {
-    e.preventDefault();
-    setAuthError("");
-    const { error } = await supabase.auth.signInWithPassword({ email, password });
-    if (error) setAuthError("ログインに失敗しました。メールアドレスまたはパスワードが違います。");
-  };
-
-  // ログアウト処理
-  const handleLogout = async () => {
-    await supabase.auth.signOut();
-  };
+  }, [fetchData]);
 
   // スコア保存
   const handleSave = async () => {
@@ -163,35 +128,8 @@ export default function MahjongApp() {
     await supabase.from("games").delete().eq("id", id);
   };
 
-  // ─── ログインしていない場合はログイン画面を表示 ───
   if (loading) {
-    return <div className="min-h-screen flex items-center justify-center bg-slate-900 text-white">読み込み中...</div>;
-  }
-
-  if (!user) {
-    return (
-      <div className="min-h-screen flex items-center justify-center bg-slate-900 px-4">
-        <div className="w-full max-w-md bg-slate-800 rounded-2xl p-8 border border-slate-700 shadow-xl">
-          <h2 className="text-2xl font-bold text-center text-emerald-400 mb-6">麻雀スコア管理 ログイン</h2>
-          {authError && <div className="mb-4 p-3 bg-red-950/50 border border-red-500/50 text-red-200 text-sm rounded-lg text-center">{authError}</div>}
-          <form onSubmit={handleLogin} className="space-y-4">
-            <div>
-              <label className="block text-xs font-semibold text-slate-400 uppercase tracking-wider mb-1.5">メールアドレス</label>
-              <input type="email" value={email} onChange={(e) => setEmail(e.target.value)} required
-                className="w-full bg-slate-950/50 border border-slate-700 rounded-xl px-4 py-3 text-slate-100 focus:outline-none focus:border-emerald-500 text-sm" />
-            </div>
-            <div>
-              <label className="block text-xs font-semibold text-slate-400 uppercase tracking-wider mb-1.5">パスワード</label>
-              <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} required
-                className="w-full bg-slate-950/50 border border-slate-700 rounded-xl px-4 py-3 text-slate-100 focus:outline-none focus:border-emerald-500 text-sm" />
-            </div>
-            <button type="submit" className="w-full bg-emerald-500 hover:bg-emerald-600 text-slate-950 font-bold py-3.5 rounded-xl tracking-wide transition-all shadow-lg shadow-emerald-500/10">
-              ログイン
-            </button>
-          </form>
-        </div>
-      </div>
-    );
+    return <div className="min-h-screen flex items-center justify-center bg-slate-900 text-white font-sans text-sm animate-pulse">読み込み中…</div>;
   }
 
   // ─── 統計データ計算ロジック ───
@@ -239,17 +177,14 @@ export default function MahjongApp() {
     };
   }).sort((a, b) => b.totalPts - a.totalPts);
 
-  // ─── メインUI（ログイン後） ───
   return (
-    <div className="max-w-xl mx-auto min-h-screen bg-slate-900 text-slate-100 flex flex-col shadow-2xl border-x border-slate-800/50 pb-12">
+    <div className="max-w-xl mx-auto min-h-screen bg-slate-900 text-slate-100 flex flex-col shadow-2xl border-x border-slate-800/50 pb-12 font-sans">
       {/* ヘッダー */}
       <header className="sticky top-0 bg-slate-900/90 backdrop-blur-md border-b border-slate-800/80 px-4 py-4 flex justify-between items-center z-40">
-        <h1 className="text-xl font-black tracking-wider text-transparent bg-clip-text bg-gradient-to-r from-emerald-400 to-teal-400 font-sans">
-          MAHJONG RECORD
+        <h1 className="text-xl font-black tracking-wider text-transparent bg-clip-text bg-gradient-to-r from-emerald-400 to-teal-400">
+          🀄 麻雀スコア管理
         </h1>
-        <button onClick={handleLogout} className="text-xs font-semibold text-slate-400 bg-slate-800 px-3 py-1.5 rounded-lg border border-slate-700/50 hover:bg-slate-700 transition">
-          ログアウト
-        </button>
+        <span className="text-[10px] bg-slate-800/80 border border-slate-700/50 text-slate-400 px-2.5 py-1 rounded-full font-bold">LIVE同期中</span>
       </header>
 
       {/* タブナビゲーション */}
@@ -267,8 +202,7 @@ export default function MahjongApp() {
       <main className="flex-1 p-4">
         {/* タブ：入力 */}
         {activeTab === "入力" && (
-          <section className="space-y-5 animate-fadeIn">
-            {/* 設定セクション */}
+          <section className="space-y-5">
             <div className="bg-slate-950/40 border border-slate-800/40 p-4 rounded-2xl flex gap-3 shadow-sm">
               <div className="flex-1">
                 <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-widest mb-1">対局日</label>
@@ -282,7 +216,6 @@ export default function MahjongApp() {
               </div>
             </div>
 
-            {/* スコア入力カード */}
             <div className="space-y-3">
               {inputs.map((inp, i) => (
                 <div key={i} className="bg-slate-950/40 border border-slate-800/40 p-4 rounded-2xl flex items-center justify-between shadow-sm hover:border-slate-800 transition">
@@ -292,12 +225,12 @@ export default function MahjongApp() {
                       <div className="flex gap-2">
                         <input type="text" value={editPlayerName} onChange={(e) => setEditPlayerName(e.target.value)}
                           className="bg-slate-900 border border-slate-700 rounded px-2 py-1 text-xs text-white max-w-[100px]" />
-                        <button onClick={handleSavePlayerName} className="text-xs bg-emerald-500 text-black px-2 py-1 rounded">保存</button>
+                        <button onClick={handleSavePlayerName} className="text-xs bg-emerald-500 text-black px-2 py-1 rounded font-bold">保存</button>
                       </div>
                     ) : (
                       <span className="text-sm font-bold text-slate-200 cursor-pointer hover:text-emerald-400"
                             onClick={() => { setEditPlayerIdx(i); setEditPlayerName(players[i]); }}>
-                        {players[i]}
+                        {players[i]} <span className="text-[10px] text-slate-600 font-normal ml-1">✏️</span>
                       </span>
                     )}
                   </div>
@@ -315,7 +248,6 @@ export default function MahjongApp() {
               ))}
             </div>
 
-            {/* 保存ボタン */}
             <button onClick={handleSave}
               className="w-full bg-gradient-to-r from-emerald-500 to-teal-500 hover:from-emerald-600 hover:to-teal-600 text-slate-950 font-black py-4 rounded-2xl tracking-wider transition shadow-lg shadow-emerald-500/5 mt-2 text-sm">
               対局結果を確定
@@ -325,7 +257,7 @@ export default function MahjongApp() {
 
         {/* タブ：履歴 */}
         {activeTab === "履歴" && (
-          <section className="space-y-3 animate-fadeIn">
+          <section className="space-y-3">
             {games.length === 0 ? (
               <div className="text-center py-12 text-slate-500 text-xs font-medium">対局履歴はありません</div>
             ) : (
@@ -333,7 +265,7 @@ export default function MahjongApp() {
                 <div key={g.id} className="bg-slate-950/40 border border-slate-800/40 rounded-2xl p-4 shadow-sm relative group">
                   <div className="flex justify-between items-center mb-3 border-b border-slate-900 pb-2">
                     <span className="text-xs font-bold font-mono text-slate-400">{g.gameDate} ［{g.gameNo}戦目］</span>
-                    <button onClick={() => handleDeleteGame(g.id)} className="text-xs text-red-400 hover:text-red-300 px-2 py-0.5 rounded bg-red-950/30 border border-red-900/30">
+                    <button onClick={() => handleDeleteGame(g.id)} className="text-xs text-red-400 hover:text-red-300 px-2 py-0.5 rounded bg-red-950/30 border border-red-900/30 font-medium">
                       削除
                     </button>
                   </div>
@@ -361,8 +293,7 @@ export default function MahjongApp() {
 
         {/* タブ：統計 */}
         {activeTab === "統計" && (
-          <section className="space-y-6 animate-fadeIn pb-6">
-            {/* トータルPtランキング */}
+          <section className="space-y-6 pb-6">
             <div className="bg-slate-950/30 border border-slate-800/40 rounded-2xl p-4 shadow-sm">
               <h3 className="text-xs font-black uppercase tracking-widest text-slate-400 mb-4 border-l-2 border-emerald-500 pl-2">現在の総合ポイント</h3>
               <div className="space-y-2.5">
@@ -380,7 +311,6 @@ export default function MahjongApp() {
               </div>
             </div>
 
-            {/* グラフ関係 */}
             {games.length > 0 && (
               <>
                 <div className="bg-slate-950/30 border border-slate-800/40 rounded-2xl p-4 shadow-sm">
@@ -422,7 +352,6 @@ export default function MahjongApp() {
               </>
             )}
 
-            {/* 詳細スタッツ */}
             <div className="bg-slate-950/30 border border-slate-800/40 rounded-2xl p-4 shadow-sm">
               <h3 className="text-xs font-black uppercase tracking-widest text-slate-400 mb-4 border-l-2 border-emerald-500 pl-2">個人詳細スタッツ</h3>
               <div className="grid grid-cols-2 gap-3">
