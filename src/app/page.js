@@ -6,7 +6,7 @@ import {
   XAxis, YAxis, CartesianGrid, Tooltip, Legend,
   ResponsiveContainer, ReferenceLine
 } from "recharts";
-import { supabase } from "@/lib/supabase";
+import { supabase } from "../lib/supabase";
 
 const RETURN_POINTS = 30000;
 const INITIAL_POINTS = 25000;
