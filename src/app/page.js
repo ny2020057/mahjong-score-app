@@ -8,94 +8,26 @@ import {
 } from "recharts";
 import { supabase } from "../lib/supabase";
 
-// ─── Tailwind CSSのスタイルをNext.jsのバグに関係なく強制適用させる設定 ───
-const injectStyles = () => {
-  if (typeof window === "undefined") return null;
-  if (document.getElementById("mahjong-core-style")) return null;
-  const style = document.createElement("style");
-  style.id = "mahjong-core-style";
-  style.innerHTML = `
-    html, body { background-color: #020617 !important; color: #f8fafc !important; font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif !important; -webkit-font-smoothing: antialiased; }
-    .max-w-xl { max-w: 36rem !important; margin-left: auto !important; margin-right: auto !important; }
-    .min-h-screen { min-height: 100vh !important; }
-    .bg-slate-950 { background-color: #020617 !important; }
-    .bg-slate-900 { background-color: #0f172a !important; }
-    .bg-slate-800 { background-color: #1e293b !important; }
-    .bg-slate-700 { background-color: #334155 !important; }
-    .bg-emerald-600 { background-color: #059669 !important; }
-    .bg-amber-600 { background-color: #d97706 !important; }
-    .text-white { color: #ffffff !important; }
-    .text-slate-100 { color: #f8fafc !important; }
-    .text-slate-300 { color: #cbd5e1 !important; }
-    .text-slate-400 { color: #94a3b8 !important; }
-    .text-slate-500 { color: #64748b !important; }
-    .text-slate-600 { color: #475569 !important; }
-    .text-emerald-400 { color: #34d399 !important; }
-    .text-amber-400 { color: #fbbf24 !important; }
-    .text-red-400 { color: #f87171 !important; }
-    .sticky { position: sticky !important; }
-    .top-0 { top: 0 !important; }
-    .z-30 { z-index: 30 !important; }
-    .border-b { border-bottom-width: 1px !important; }
-    .border-t { border-top-width: 1px !important; }
-    .border { border-width: 1px !important; }
-    .border-slate-800 { border-color: #1e293b !important; }
-    .border-slate-700 { border-color: #334155 !important; }
-    .border-amber-800\\/40 { border-color: rgba(146, 64, 14, 0.4) !important; }
-    .flex { display: flex !important; }
-    .items-center { align-items: center !important; }
-    .justify-between { justify-content: space-between !important; }
-    .justify-center { justify-content: center !important; }
-    .grid { display: grid !important; }
-    .grid-cols-2 { grid-template-cols: repeat(2, minmax(0, 1fr)) !important; }
-    .gap-1 { gap: 0.25rem !important; }
-    .gap-2 { gap: 0.5rem !important; }
-    .gap-3 { gap: 0.75rem !important; }
-    .space-y-2 { > * + * { margin-top: 0.5rem !important; } }
-    .space-y-3 { > * + * { margin-top: 0.75rem !important; } }
-    .space-y-4 { > * + * { margin-top: 1rem !important; } }
-    .space-y-5 { > * + * { margin-top: 1.25rem !important; } }
-    .space-y-6 { > * + * { margin-top: 1.5rem !important; } }
-    .px-4 { padding-left: 1rem !important; padding-right: 1rem !important; }
-    .py-3 { padding-top: 0.75rem !important; padding-bottom: 0.75rem !important; }
-    .py-1\\.5 { padding-top: 0.375rem !important; padding-bottom: 0.375rem !important; }
-    .py-2.5 { padding-top: 0.625rem !important; padding-bottom: 0.625rem !important; }
-    .rounded-md { rounded-radius: 0.375rem !important; border-radius: 0.375rem !important; }
-    .rounded-xl { border-radius: 0.75rem !important; }
-    .rounded-lg { border-radius: 0.5rem !important; }
-    .text-sm { font-size: 0.875rem !important; }
-    .text-xs { font-size: 0.75rem !important; }
-    .text-base { font-size: 1rem !important; }
-    .text-lg { font-size: 1.125rem !important; }
-    .font-bold { font-weight: 700 !important; }
-    .font-semibold { font-weight: 600 !important; }
-    .font-medium { font-weight: 500 !important; }
-    .uppercase { text-transform: uppercase !important; }
-    .tracking-wide { tracking-spacing: 0.025em !important; letter-spacing: 0.025em !important; }
-    .tracking-widest { letter-spacing: 0.1em !important; }
-    .w-full { width: 100% !important; }
-    .w-5 { width: 1.25rem !important; }
-    .w-24 { width: 6rem !important; }
-    .w-16 { width: 4rem !important; }
-    .w-14 { width: 3.5rem !important; }
-    .w-10 { width: 2.5rem !important; }
-    .h-5 { height: 1.25rem !important; }
-    .h-10 { height: 2.5rem !important; }
-    .text-center { text-align: center !important; }
-    .text-right { text-align: right !important; }
-    .divide-y > * + * { border-top-width: 1px !important; border-color: #1e293b !important; }
-    .divide-slate-800\\/60 > * + * { border-top-width: 1px !important; border-color: rgba(30, 41, 59, 0.6) !important; }
-    .overflow-hidden { overflow: hidden !important; }
-    .truncate { overflow: hidden !important; text-overflow: ellipsis !important; white-space: nowrap !important; }
-    button { cursor: pointer; border: none; background: none; color: inherit; }
-    input { background-color: #1e293b; border: 1px solid #334155; color: white; border-radius: 0.375rem; padding: 0.25rem 0.5rem; }
-    input[type="date"] { color-scheme: dark; }
-  `;
-  document.head.appendChild(style);
-};
-
+const RETURN_POINTS = 30000;
+const INITIAL_POINTS = 25000;
+const OKA = ((RETURN_POINTS - INITIAL_POINTS) * 4) / 1000;
+const DEFAULT_NAMES = ["東家", "南家", "西家", "北家"];
 const COLORS = ["#34d399", "#60a5fa", "#f472b6", "#fbbf24"];
 const TABS = ["入力", "履歴", "統計"];
+
+function calcPoints(s) { return Math.round((s - RETURN_POINTS) / 1000); }
+function calcGameResult(entries) {
+  const sorted = [...entries].map((e, i) => ({ ...e, idx: i })).sort((a, b) => b.score - a.score || a.idx - b.idx);
+  return entries.map((e, i) => {
+    const rank = sorted.findIndex(s => s.idx === i) + 1;
+    let pts = calcPoints(e.score);
+    if (rank === 1) pts += OKA;
+    return { name: e.name, score: e.score, rank, pts };
+  });
+}
+function toDateStr(iso) { return iso.slice(0, 10); }
+function formatDate(d) { const [y, m, dd] = d.split("-"); return `${y}年${parseInt(m)}月${parseInt(dd)}日`; }
+function todayStr() { return new Date().toLocaleDateString("sv-SE"); }
 
 // ─── App ──────────────────────────────────────────────────────────────────────
 export default function App() {
@@ -104,10 +36,6 @@ export default function App() {
   const [games, setGames] = useState([]);
   const [loading, setLoading] = useState(true);
   const [syncing, setSyncing] = useState(false);
-
-  useEffect(() => {
-    injectStyles(); // スタイルを強制注入
-  }, []);
 
   const reload = useCallback(async () => {
     const { data: stateData } = await supabase.from("app_state").select("*").eq("key", "players").single();
@@ -167,7 +95,7 @@ export default function App() {
 
   if (loading) return (
     <div className="min-h-screen flex items-center justify-center bg-slate-950">
-      <p className="text-slate-400 text-sm tracking-widest font-sans">読み込み中…</p>
+      <p className="text-slate-400 text-sm tracking-widest animate-pulse">読み込み中…</p>
     </div>
   );
 
@@ -179,7 +107,7 @@ export default function App() {
             <span className="text-xl">🀄</span>
             <h1 className="text-base font-bold tracking-wide text-white">麻雀スコア</h1>
           </div>
-          {syncing && <span className="text-xs text-amber-400">同期中…</span>}
+          {syncing && <span className="text-xs text-amber-400 animate-pulse">同期中…</span>}
         </div>
         <div className="max-w-xl mx-auto px-4 flex gap-1 pb-2">
           {TABS.map((t, i) => (
@@ -268,7 +196,8 @@ function InputTab({ players, onUpdatePlayers, onAddGame, games }) {
           <div className="flex-1">
             <label className="text-xs text-slate-500 mb-1 block">対局日</label>
             <input type="date" value={gameDate} onChange={e => setGameDate(e.target.value)}
-              className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-emerald-500" />
+              className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-emerald-500"
+              style={{ colorScheme: "dark" }} />
           </div>
           <div className="w-24">
             <label className="text-xs text-slate-500 mb-1 block">試合番号</label>
@@ -517,7 +446,8 @@ function EditGameView({ game, onSave, onCancel }) {
           <div className="flex-1">
             <label className="text-xs text-slate-500 mb-1 block">対局日</label>
             <input type="date" value={gameDate} onChange={e => setGameDate(e.target.value)}
-              className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-amber-500" />
+              className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-amber-500"
+              style={{ colorScheme: "dark" }} />
           </div>
           <div className="w-24">
             <label className="text-xs text-slate-500 mb-1 block">試合番号</label>
