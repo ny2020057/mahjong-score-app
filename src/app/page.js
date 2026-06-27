@@ -18,374 +18,640 @@ const TABS = ["入力", "履歴", "統計"];
 function calcPoints(s) { return Math.round((s - RETURN_POINTS) / 1000); }
 function calcGameResult(entries) {
   const sorted = [...entries].map((e, i) => ({ ...e, idx: i })).sort((a, b) => b.score - a.score || a.idx - b.idx);
-  const base = sorted.map((u, r) => {
-    let p = calcPoints(u.score);
-    if (r === 0) p += OKA;
-    let uma = 0;
-    if (r === 0) uma = 30;
-    else if (r === 1) uma = 10;
-    else if (r === 2) uma = -10;
-    else if (r === 3) uma = -30;
-    return { ...u, rank: r + 1, pts: p + uma };
+  return entries.map((e, i) => {
+    const rank = sorted.findIndex(s => s.idx === i) + 1;
+    let pts = calcPoints(e.score);
+    if (rank === 1) pts += OKA;
+    return { name: e.name, score: e.score, rank, pts };
   });
-  const sumPts = base.reduce((acc, u) => acc + u.pts, 0);
-  if (sumPts !== 0) {
-    const topIdx = base.findIndex(u => u.rank === 1);
-    if (topIdx !== -1) base[topIdx].pts -= sumPts;
-  }
-  const res = new Array(4);
-  base.forEach(u => { res[u.idx] = { name: u.name, score: u.score, rank: u.rank, pts: u.pts }; });
-  return res;
 }
+function toDateStr(iso) { return iso.slice(0, 10); }
+function formatDate(d) { const [y, m, dd] = d.split("-"); return `${y}年${parseInt(m)}月${parseInt(dd)}日`; }
+function todayStr() { return new Date().toLocaleDateString("sv-SE"); }
 
-export default function MahjongApp() {
-  const [activeTab, setActiveTab] = useState("入力");
+// ─── App ──────────────────────────────────────────────────────────────────────
+export default function App() {
+  const [tab, setTab] = useState(0);
   const [players, setPlayers] = useState(DEFAULT_NAMES);
   const [games, setGames] = useState([]);
-  const [inputs, setInputs] = useState([{ score: "25000" }, { score: "25000" }, { score: "25000" }, { score: "25000" }]);
-  const [gameDate, setGameDate] = useState(new Date().toISOString().split("T")[0]);
-  const [gameNo, setGameNo] = useState("1");
-  const [editPlayerIdx, setEditPlayerIdx] = useState(null);
-  const [editPlayerName, setEditPlayerName] = useState("");
   const [loading, setLoading] = useState(true);
+  const [syncing, setSyncing] = useState(false);
 
-  const fetchData = useCallback(async () => {
+  const reload = useCallback(async () => {
+    // プレイヤー名の取得
     const { data: stateData } = await supabase.from("app_state").select("*").eq("key", "players").single();
     if (stateData) setPlayers(stateData.value);
 
+    // 対局履歴の取得
     const { data: gamesData } = await supabase.from("games").select("*").order("game_date", { ascending: false }).order("game_no", { ascending: false });
     if (gamesData) {
       const formatted = gamesData.map(g => ({
         id: g.id,
+        timestamp: g.created_at,
         gameDate: g.game_date,
         gameNo: g.game_no,
         results: g.results
       }));
       setGames(formatted);
-      if (formatted.length > 0) {
-        const maxNo = Math.max(...formatted.filter(g => g.gameDate === gameDate).map(g => parseInt(g.gameNo) || 0), 0);
-        setGameNo(String(maxNo + 1));
-      }
     }
     setLoading(false);
-  }, [gameDate]);
+  }, []);
 
-  useEffect(() => {
-    fetchData();
-  }, [fetchData]);
+  useEffect(() => { reload(); }, [reload]);
 
+  // リアルタイム同期（他の端末での入力も一瞬で反映）
   useEffect(() => {
     const channel = supabase.channel("schema-db-changes")
-      .on("postgres_changes", { event: "*", schema: "public", table: "games" }, () => { fetchData(); })
-      .on("postgres_changes", { event: "*", schema: "public", table: "app_state" }, () => { fetchData(); })
+      .on("postgres_changes", { event: "*", schema: "public", table: "games" }, () => { reload(); })
+      .on("postgres_changes", { event: "*", schema: "public", table: "app_state" }, () => { reload(); })
       .subscribe();
     return () => { supabase.removeChannel(channel); };
-  }, [fetchData]);
+  }, [reload]);
 
-  const handleSave = async () => {
-    const entries = inputs.map((inp, i) => ({ name: players[i], score: parseInt(inp.score) || 0 }));
-    const total = entries.reduce((acc, e) => acc + e.score, 0);
-    if (total !== 100000) {
-      alert(`合計点数が ${total} です。100000点ちょうどにしてください。`);
-      return;
-    }
-    const results = calcGameResult(entries);
-    
+  const addGame = async (game) => {
+    setSyncing(true);
     const { error } = await supabase.from("games").insert([{
-      game_date: gameDate,
-      game_no: parseInt(gameNo) || 1,
-      results: results
+      game_date: game.gameDate,
+      game_no: game.gameNo,
+      results: game.results
     }]);
-
-    if (!error) {
-      setInputs([{ score: "25000" }, { score: "25000" }, { score: "25000" }, { score: "25000" }]);
-      setActiveTab("履歴");
-    } else {
-      alert("保存に失敗しました。");
-    }
+    if (!error) await reload();
+    setSyncing(false);
   };
 
-  const handleSavePlayerName = async () => {
-    if (!editPlayerName.trim()) return;
-    const next = [...players];
-    next[editPlayerIdx] = editPlayerName.trim();
-    
-    const { error } = await supabase.from("app_state").upsert({ key: "players", value: next });
-    if (!error) {
-      setEditPlayerIdx(null);
-    }
+  const deleteGame = async (id) => {
+    setSyncing(true);
+    const { error } = await supabase.from("games").delete().eq("id", id);
+    if (!error) await reload();
+    setSyncing(false);
   };
 
-  const handleDeleteGame = async (id) => {
-    if (!confirm("この対局結果を削除しますか？")) return;
-    await supabase.from("games").delete().eq("id", id);
+  const updateGame = async (updated) => {
+    setSyncing(true);
+    const { error } = await supabase.from("games").update({
+      game_date: updated.gameDate,
+      game_no: updated.gameNo,
+      results: updated.results
+    }).eq("id", updated.id);
+    if (!error) await reload();
+    setSyncing(false);
   };
 
-  if (loading) {
-    return <div className="min-h-screen flex items-center justify-center bg-slate-950 text-emerald-400 font-sans text-sm tracking-widest">LOADING...</div>;
-  }
+  const updatePlayers = async (names) => {
+    setSyncing(true);
+    setPlayers(names);
+    await supabase.from("app_state").upsert({ key: "players", value: names });
+    setSyncing(false);
+  };
 
-  // ─── 統計データ計算ロジック ───
-  const statsMap = {};
-  players.forEach(p => { statsMap[p] = { name: p, totalPts: 0, count: 0, ranks: [0, 0, 0, 0], scores: 0 }; });
-  
-  const timelineData = [];
-  const reversedGames = [...games].reverse();
-  const currentTotalPts = {};
-  players.forEach(p => currentTotalPts[p] = 0);
-
-  reversedGames.forEach((g, idx) => {
-    const pointEntry = { name: `G${idx + 1}` };
-    g.results.forEach(r => {
-      if (statsMap[r.name]) {
-        statsMap[r.name].totalPts += r.pts;
-        statsMap[r.name].count += 1;
-        statsMap[r.name].ranks[r.rank - 1] += 1;
-        statsMap[r.name].scores += r.score;
-        currentTotalPts[r.name] += r.pts;
-      }
-    });
-    players.forEach(p => { pointEntry[p] = currentTotalPts[p]; });
-    timelineData.push(pointEntry);
-  });
-
-  const rankDistData = [
-    { name: "1位", ...Object.fromEntries(players.map(p => [p, statsMap[p]?.ranks[0] || 0])) },
-    { name: "2位", ...Object.fromEntries(players.map(p => [p, statsMap[p]?.ranks[1] || 0])) },
-    { name: "3位", ...Object.fromEntries(players.map(p => [p, statsMap[p]?.ranks[2] || 0])) },
-    { name: "4位", ...Object.fromEntries(players.map(p => [p, statsMap[p]?.ranks[3] || 0])) },
-  ];
-
-  const summaryStats = players.map(p => {
-    const s = statsMap[p];
-    if (!s || s.count === 0) return { name: p, count: 0, avgRank: "–", top1Rate: "–", avgPts: "–", totalPts: 0 };
-    const sumRanks = s.ranks.reduce((acc, c, i) => acc + c * (i + 1), 0);
-    return {
-      name: p,
-      count: s.count,
-      avgRank: (sumRanks / s.count).toFixed(2),
-      top1Rate: ((s.ranks[0] / s.count) * 100).toFixed(1),
-      avgPts: (s.totalPts / s.count).toFixed(1),
-      totalPts: s.totalPts
-    };
-  }).sort((a, b) => b.totalPts - a.totalPts);
+  if (loading) return (
+    <div className="min-h-screen flex items-center justify-center bg-slate-950">
+      <p className="text-slate-400 text-sm tracking-widest animate-pulse">読み込み中…</p>
+    </div>
+  );
 
   return (
-    <div className="max-w-md mx-auto min-h-screen bg-slate-950 text-slate-100 flex flex-col shadow-2xl pb-12 font-sans border-x border-slate-900">
-      {/* ヘッダー */}
-      <header className="sticky top-0 bg-slate-950/80 backdrop-blur-md border-b border-slate-900 px-4 py-4 flex justify-between items-center z-40">
-        <h1 className="text-lg font-black tracking-widest text-transparent bg-clip-text bg-gradient-to-r from-emerald-400 to-teal-400 font-mono">
-          MAHJONG RECORD
-        </h1>
-        <span className="text-[10px] bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 px-2.5 py-1 rounded-full font-bold tracking-wider">LIVE</span>
-      </header>
-
-      {/* タブナビゲーション */}
-      <nav className="px-4 mt-4">
-        <div className="bg-slate-900/50 border border-slate-900 p-1 rounded-xl flex gap-1 shadow-inner">
-          {TABS.map(t => (
-            <button key={t} onClick={() => setActiveTab(t)}
-              className={`flex-1 text-center py-2 text-xs font-bold rounded-lg transition-all tracking-wider ${activeTab === t ? "bg-gradient-to-r from-emerald-500 to-teal-500 text-slate-950 font-black shadow-md shadow-emerald-500/20" : "text-slate-400 hover:text-slate-200"}`}>
+    <div className="min-h-screen bg-slate-950 text-slate-100 font-sans">
+      <header className="sticky top-0 z-30 bg-slate-950/90 backdrop-blur border-b border-slate-800">
+        <div className="max-w-xl mx-auto px-4 py-3 flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <span className="text-xl">🀄</span>
+            <h1 className="text-base font-bold tracking-wide text-white">麻雀スコア</h1>
+          </div>
+          {syncing && <span className="text-xs text-amber-400 animate-pulse">同期中…</span>}
+        </div>
+        <div className="max-w-xl mx-auto px-4 flex gap-1 pb-2">
+          {TABS.map((t, i) => (
+            <button key={t} onClick={() => setTab(i)}
+              className={`flex-1 py-1.5 rounded-md text-sm font-medium transition-colors ${tab === i ? "bg-emerald-600 text-white" : "text-slate-400 hover:text-slate-200"}`}>
               {t}
             </button>
           ))}
         </div>
-      </nav>
-
-      <main className="flex-1 p-4">
-        {/* タブ：入力 */}
-        {activeTab === "入力" && (
-          <section className="space-y-4 animate-fadeIn">
-            <div className="bg-slate-900/30 border border-slate-900 p-4 rounded-xl flex gap-3 shadow-sm">
-              <div className="flex-1">
-                <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-widest mb-1.5">対局日</label>
-                <input type="date" value={gameDate} onChange={(e) => setGameDate(e.target.value)}
-                  className="w-full bg-slate-950/80 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-200 font-medium focus:outline-none focus:border-emerald-500 transition" />
-              </div>
-              <div className="w-24">
-                <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-widest mb-1.5">戦目</label>
-                <input type="number" value={gameNo} onChange={(e) => setGameNo(e.target.value)}
-                  className="w-full bg-slate-950/80 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-200 font-medium text-center focus:outline-none focus:border-emerald-500 transition" />
-              </div>
-            </div>
-
-            <div className="space-y-2.5">
-              {inputs.map((inp, i) => (
-                <div key={i} className="bg-slate-900/30 border border-slate-900 p-4 rounded-xl flex items-center justify-between transition-all hover:border-slate-800">
-                  <div className="flex items-center gap-3">
-                    <span className="w-2 h-2 rounded-full shadow-sm" style={{ backgroundColor: COLORS[i] }} />
-                    {editPlayerIdx === i ? (
-                      <div className="flex gap-2">
-                        <input type="text" value={editPlayerName} onChange={(e) => setEditPlayerName(e.target.value)}
-                          className="bg-slate-950 border border-slate-700 rounded px-2 py-1 text-xs text-white max-w-[100px]" />
-                        <button onClick={handleSavePlayerName} className="text-xs bg-emerald-500 text-black px-2 py-1 rounded font-bold">保存</button>
-                      </div>
-                    ) : (
-                      <span className="text-sm font-bold text-slate-300 cursor-pointer hover:text-emerald-400 group flex items-center gap-1.5"
-                            onClick={() => { setEditPlayerIdx(i); setEditPlayerName(players[i]); }}>
-                        {players[i]}
-                        <span className="text-[10px] opacity-0 group-hover:opacity-100 transition-opacity text-slate-500">✏️</span>
-                      </span>
-                    )}
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <input type="number" value={inp.score} placeholder="0"
-                      onChange={(e) => {
-                        const next = [...inputs];
-                        next[i].score = e.target.value;
-                        setInputs(next);
-                      }}
-                      className="w-28 bg-slate-950/80 border border-slate-800 rounded-lg px-3 py-2 text-right font-mono text-base font-bold text-slate-100 focus:outline-none focus:border-emerald-500 transition placeholder-slate-800" />
-                    <span className="text-xs font-bold text-slate-600 font-mono w-4">点</span>
-                  </div>
-                </div>
-              ))}
-            </div>
-
-            <button onClick={handleSave}
-              className="w-full bg-gradient-to-r from-emerald-500 to-teal-500 hover:from-emerald-600 hover:to-teal-600 text-slate-950 font-black py-3.5 rounded-xl tracking-wider transition shadow-lg shadow-emerald-500/10 mt-2 text-sm">
-              対局結果を確定
-            </button>
-          </section>
-        )}
-
-        {/* タブ：履歴 */}
-        {activeTab === "履歴" && (
-          <section className="space-y-3 animate-fadeIn">
-            {games.length === 0 ? (
-              <div className="text-center py-12 text-slate-600 text-xs font-medium tracking-wide">対局履歴はありません</div>
-            ) : (
-              games.map((g) => (
-                <div key={g.id} className="bg-slate-900/20 border border-slate-900 rounded-xl p-4 shadow-sm">
-                  <div className="flex justify-between items-center mb-3 border-b border-slate-900 pb-2">
-                    <span className="text-xs font-bold font-mono text-slate-500">{g.gameDate} ［{g.gameNo}戦目］</span>
-                    <button onClick={() => handleDeleteGame(g.id)} className="text-[10px] text-red-400/70 hover:text-red-400 px-2 py-0.5 rounded bg-red-950/20 border border-red-900/30 transition">
-                      削除
-                    </button>
-                  </div>
-                  <div className="grid grid-cols-2 gap-2">
-                    {g.results.map((r, i) => (
-                      <div key={i} className="flex justify-between items-center bg-slate-950/40 px-3 py-2 rounded-lg border border-slate-900/30">
-                        <div className="flex items-center gap-2 min-w-0">
-                          <RankBadge rank={r.rank} small />
-                          <span className="text-xs font-bold text-slate-300 truncate">{r.name}</span>
-                        </div>
-                        <div className="text-right pl-2">
-                          <div className="text-[10px] font-mono text-slate-500">{r.score.toLocaleString()}</div>
-                          <div className={`text-xs font-black font-mono ${r.pts >= 0 ? "text-emerald-400" : "text-red-400"}`}>
-                            {r.pts >= 0 ? `+${r.pts}` : r.pts}
-                          </div>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              ))
-            )}
-          </section>
-        )}
-
-        {/* タブ：統計 */}
-        {activeTab === "統計" && (
-          <section className="space-y-5 animate-fadeIn pb-6">
-            {/* トータルPtランキング */}
-            <div className="bg-slate-900/20 border border-slate-900 rounded-xl p-4">
-              <h3 className="text-xs font-black uppercase tracking-widest text-slate-400 mb-3.5 border-l-2 border-emerald-500 pl-2">TOTAL POINTS</h3>
-              <div className="space-y-2">
-                {summaryStats.map((s, i) => (
-                  <div key={s.name} className="flex justify-between items-center bg-slate-950/40 px-3.5 py-2.5 rounded-lg border border-slate-900/30">
-                    <div className="flex items-center gap-2.5">
-                      <span className={`w-4 h-4 rounded text-[10px] font-black flex items-center justify-center ${i === 0 ? "bg-amber-400/10 text-amber-400 border border-amber-400/20" : "bg-slate-800 text-slate-500"}`}>{i + 1}</span>
-                      <span className="text-xs font-bold text-slate-300">{s.name}</span>
-                    </div>
-                    <span className={`text-xs font-mono font-black ${s.totalPts >= 0 ? "text-emerald-400" : "text-red-400"}`}>
-                      {s.totalPts >= 0 ? `+${s.totalPts}` : s.totalPts} <span className="text-[9px] text-slate-600 font-bold ml-0.5">pt</span>
-                    </span>
-                  </div>
-                ))}
-              </div>
-            </div>
-
-            {/* グラフ関係 */}
-            {games.length > 0 && (
-              <>
-                <div className="bg-slate-900/20 border border-slate-900 rounded-xl p-4">
-                  <h3 className="text-xs font-black uppercase tracking-widest text-slate-400 mb-4 border-l-2 border-emerald-500 pl-2">POINT TIMELINE</h3>
-                  <div className="w-full h-48 text-[9px] font-mono">
-                    <ResponsiveContainer width="100%" height="100%">
-                      <LineChart data={timelineData} margin={{ top: 5, right: 5, left: -30, bottom: 5 }}>
-                        <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" opacity={0.3} />
-                        <XAxis dataKey="name" stroke="#475569" />
-                        <YAxis stroke="#475569" />
-                        <Tooltip contentStyle={{ backgroundColor: "#020617", borderColor: "#1e293b", borderRadius: "8px", color: "#f8fafc" }} />
-                        <Legend wrapperStyle={{ paddingTop: "10px" }} />
-                        <ReferenceLine y={0} stroke="#475569" strokeDasharray="3 3" opacity={0.5} />
-                        {players.map((p, i) => (
-                          <Line key={p} type="monotone" dataKey={p} stroke={COLORS[i]} strokeWidth={2} dot={{ r: 2 }} activeDot={{ r: 4 }} />
-                        ))}
-                      </LineChart>
-                    </ResponsiveContainer>
-                  </div>
-                </div>
-
-                <div className="bg-slate-900/20 border border-slate-900 rounded-xl p-4">
-                  <h3 className="text-xs font-black uppercase tracking-widest text-slate-400 mb-4 border-l-2 border-emerald-500 pl-2">RANK DISTRIBUTION</h3>
-                  <div className="w-full h-48 text-[9px] font-mono">
-                    <ResponsiveContainer width="100%" height="100%">
-                      <BarChart data={rankDistData} margin={{ top: 5, right: 5, left: -30, bottom: 5 }}>
-                        <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" opacity={0.3} />
-                        <XAxis dataKey="name" stroke="#475569" />
-                        <YAxis stroke="#475569" allowDecimals={false} />
-                        <Tooltip contentStyle={{ backgroundColor: "#020617", borderColor: "#1e293b", borderRadius: "8px" }} />
-                        <Legend wrapperStyle={{ paddingTop: "10px" }} />
-                        {players.map((p, i) => (
-                          <Bar key={p} dataKey={p} fill={COLORS[i]} radius={[3, 3, 0, 0]} />
-                        ))}
-                      </BarChart>
-                    </ResponsiveContainer>
-                  </div>
-                </div>
-              </>
-            )}
-
-            {/* 詳細スタッツ */}
-            <div className="bg-slate-900/20 border border-slate-900 rounded-xl p-4">
-              <h3 className="text-xs font-black uppercase tracking-widest text-slate-400 mb-3.5 border-l-2 border-emerald-500 pl-2">DETAILS</h3>
-              <div className="grid grid-cols-2 gap-2.5">
-                {summaryStats.map((s, i) => (
-                  <div key={s.name} className="bg-slate-950/50 border border-slate-900 rounded-lg p-3 relative overflow-hidden">
-                    <div className="flex items-center gap-2 mb-2 pb-1.5 border-b border-slate-900">
-                      <span className="w-1.5 h-1.5 rounded-full" style={{ background: COLORS[i % COLORS.length] }} />
-                      <span className="text-xs font-bold text-slate-200">{s.name}</span>
-                    </div>
-                    <div className="space-y-1">
-                      <StatRow label="対局数" value={`${s.count}局`} />
-                      <StatRow label="平均順位" value={s.count ? `${s.avgRank}位` : "–"} />
-                      <StatRow label="1位率" value={s.count ? `${s.top1Rate}%` : "–"} />
-                      <StatRow label="平均PT" value={s.count ? s.avgPts : "–"} color={s.count && parseFloat(s.avgPts) >= 0 ? "text-emerald-400" : "text-red-400"} />
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
-          </section>
-        )}
+      </header>
+      <main className="max-w-xl mx-auto px-4 py-6 pb-20">
+        {tab === 0 && <InputTab players={players} onUpdatePlayers={updatePlayers} onAddGame={addGame} games={games} />}
+        {tab === 1 && <HistoryTab games={games} onDeleteGame={deleteGame} onUpdateGame={updateGame} />}
+        {tab === 2 && <StatsTab games={games} players={players} />}
       </main>
     </div>
   );
 }
 
-function RankBadge({ rank, small }) {
-  const colors = { 1: "bg-amber-400/20 text-amber-400 border border-amber-400/30", 2: "bg-slate-400/20 text-slate-300 border border-slate-400/30", 3: "bg-amber-700/20 text-amber-600 border border-amber-700/30", 4: "bg-slate-800 text-slate-500" };
-  const size = small ? "w-4 h-4 text-[9px]" : "w-5 h-5 text-xs";
-  return <span className={`${size} rounded-full font-black flex items-center justify-center flex-shrink-0 ${colors[rank]}`}>{rank}</span>;
+// ─── Input Tab ────────────────────────────────────────────────────────────────
+function InputTab({ players, onUpdatePlayers, onAddGame, games }) {
+  const [scores, setScores] = useState(["", "", "", ""]);
+  const [preview, setPreview] = useState(null);
+  const [error, setError] = useState("");
+  const [editNames, setEditNames] = useState(false);
+  const [nameEdits, setNameEdits] = useState([...players]);
+  const [saved, setSaved] = useState(false);
+  const [gameDate, setGameDate] = useState(todayStr());
+  const [gameNo, setGameNo] = useState("");
+
+  useEffect(() => {
+    const sameDay = games.filter(g => (g.gameDate || toDateStr(g.timestamp)) === gameDate);
+    setGameNo(String(sameDay.reduce((m, g) => Math.max(m, g.gameNo || 0), 0) + 1));
+  }, [gameDate, games]);
+
+  useEffect(() => {
+    const nums = scores.map(s => parseInt(s, 10));
+    if (nums.some(isNaN)) { setPreview(null); setError(""); return; }
+    const total = nums.reduce((a, b) => a + b, 0);
+    if (total !== 100000) { setPreview(null); setError(`合計 ${total.toLocaleString()} 点（100,000点になるよう入力してください）`); return; }
+    setError("");
+    setPreview(calcGameResult(players.map((name, i) => ({ name, score: nums[i] }))));
+  }, [scores, players]);
+
+  const handleSave = async () => {
+    if (!preview) return;
+    const no = parseInt(gameNo, 10);
+    if (!gameDate || isNaN(no) || no < 1) { setError("対局日と試合番号を正しく入力してください"); return; }
+    await onAddGame({ id: Date.now().toString(), timestamp: new Date().toISOString(), gameDate, gameNo: no, results: preview });
+    setScores(["", "", "", ""]);
+    setPreview(null);
+    setSaved(true);
+    setTimeout(() => setSaved(false), 2000);
+  };
+
+  return (
+    <div className="space-y-5">
+      <section className="bg-slate-900 rounded-xl p-4 border border-slate-800">
+        <div className="flex items-center justify-between mb-3">
+          <h2 className="text-sm font-semibold text-slate-300 uppercase tracking-wider">プレイヤー名</h2>
+          {!editNames
+            ? <button onClick={() => { setNameEdits([...players]); setEditNames(true); }} className="text-xs text-emerald-400 hover:text-emerald-300">編集</button>
+            : <div className="flex gap-2">
+                <button onClick={async () => { await onUpdatePlayers(nameEdits); setEditNames(false); }} className="text-xs text-emerald-400 hover:text-emerald-300">保存</button>
+                <button onClick={() => setEditNames(false)} className="text-xs text-slate-500 hover:text-slate-400">キャンセル</button>
+              </div>
+          }
+        </div>
+        <div className="grid grid-cols-2 gap-2">
+          {players.map((name, i) => (
+            <div key={i} className="flex items-center gap-2">
+              <span className="w-5 h-5 rounded bg-slate-700 text-xs flex items-center justify-center text-slate-400">{i + 1}</span>
+              {editNames
+                ? <input value={nameEdits[i]} onChange={e => { const n = [...nameEdits]; n[i] = e.target.value; setNameEdits(n); }}
+                    className="flex-1 bg-slate-800 border border-slate-700 rounded px-2 py-1 text-sm text-white focus:outline-none focus:border-emerald-500" />
+                : <span className="text-sm text-white">{name}</span>
+              }
+            </div>
+          ))}
+        </div>
+      </section>
+
+      <section className="bg-slate-900 rounded-xl p-4 border border-slate-800">
+        <h2 className="text-sm font-semibold text-slate-300 uppercase tracking-wider mb-3">対局情報</h2>
+        <div className="flex gap-3">
+          <div className="flex-1">
+            <label className="text-xs text-slate-500 mb-1 block">対局日</label>
+            <input type="date" value={gameDate} onChange={e => setGameDate(e.target.value)}
+              className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-emerald-500"
+              style={{ colorScheme: "dark" }} />
+          </div>
+          <div className="w-24">
+            <label className="text-xs text-slate-500 mb-1 block">試合番号</label>
+            <input type="number" min="1" value={gameNo} onChange={e => setGameNo(e.target.value)}
+              className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-emerald-500 text-center" />
+            <p className="text-xs text-slate-600 mt-1 text-center">試合目</p>
+          </div>
+        </div>
+      </section>
+
+      <section className="bg-slate-900 rounded-xl p-4 border border-slate-800">
+        <h2 className="text-sm font-semibold text-slate-300 uppercase tracking-wider mb-3">最終点数を入力</h2>
+        <div className="space-y-2">
+          {players.map((name, i) => (
+            <div key={i} className="flex items-center gap-3">
+              <label className="w-16 text-sm text-slate-400 truncate">{name}</label>
+              <input type="number" placeholder="例: 35600" value={scores[i]}
+                onChange={e => { const n = [...scores]; n[i] = e.target.value; setScores(n); }}
+                className="flex-1 bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm text-white placeholder-slate-600 focus:outline-none focus:border-emerald-500" />
+            </div>
+          ))}
+        </div>
+        {error && <p className="mt-3 text-xs text-red-400 bg-red-950/40 rounded-lg px-3 py-2">{error}</p>}
+      </section>
+
+      {preview && (
+        <section className="bg-slate-900 rounded-xl border border-slate-800 overflow-hidden">
+          <div className="px-4 py-3 border-b border-slate-800 flex items-center justify-between">
+            <h2 className="text-sm font-semibold text-slate-300 uppercase tracking-wider">プレビュー</h2>
+            <span className="text-xs text-slate-500">{formatDate(gameDate)} 第{gameNo}試合</span>
+          </div>
+          <div className="divide-y divide-slate-800">
+            {[...preview].sort((a, b) => a.rank - b.rank).map(r => (
+              <div key={r.name} className="flex items-center gap-3 px-4 py-3">
+                <RankBadge rank={r.rank} />
+                <span className="flex-1 text-sm text-white">{r.name}</span>
+                <span className="text-sm text-slate-400">{r.score.toLocaleString()}点</span>
+                <span className={`text-sm font-bold w-14 text-right ${r.pts >= 0 ? "text-emerald-400" : "text-red-400"}`}>
+                  {r.pts >= 0 ? `+${r.pts}` : r.pts}
+                </span>
+              </div>
+            ))}
+          </div>
+          <div className="px-4 py-3 border-t border-slate-800">
+            <button onClick={handleSave}
+              className="w-full bg-emerald-600 hover:bg-emerald-500 text-white text-sm font-semibold rounded-lg py-2.5 transition-colors">
+              {saved ? "✓ 保存しました" : "対局を確定する"}
+            </button>
+          </div>
+        </section>
+      )}
+    </div>
+  );
 }
 
-function StatRow({ label, value, color = "text-slate-400" }) {
+// ─── History Tab ──────────────────────────────────────────────────────────────
+function HistoryTab({ games, onDeleteGame, onUpdateGame }) {
+  const [selectedDate, setSelectedDate] = useState(null);
+  const [selectedGame, setSelectedGame] = useState(null);
+  const [editing, setEditing] = useState(false);
+
+  useEffect(() => {
+    if (selectedGame) {
+      const latest = games.find(g => g.id === selectedGame.id);
+      if (latest) setSelectedGame(latest);
+      else { setSelectedGame(null); setEditing(false); }
+    }
+  }, [games]);
+
+  const byDate = {};
+  games.forEach(g => {
+    const d = g.gameDate || toDateStr(g.timestamp);
+    if (!byDate[d]) byDate[d] = [];
+    byDate[d].push(g);
+  });
+  const dates = Object.keys(byDate).sort((a, b) => b.localeCompare(a));
+
+  if (games.length === 0) return (
+    <div className="text-center py-16 text-slate-600">
+      <p className="text-4xl mb-3">🀄</p>
+      <p className="text-sm">対局履歴がありません</p>
+    </div>
+  );
+
+  if (selectedGame && editing) {
+    return (
+      <EditGameView
+        game={selectedGame}
+        onSave={async (updated) => { await onUpdateGame(updated); setEditing(false); }}
+        onCancel={() => setEditing(false)}
+      />
+    );
+  }
+
+  if (selectedGame) {
+    const g = selectedGame;
+    const d = g.gameDate || toDateStr(g.timestamp);
+    return (
+      <div className="space-y-4">
+        <nav className="flex items-center gap-2 text-sm">
+          <button onClick={() => setSelectedGame(null)} className="text-emerald-400 hover:text-emerald-300">{formatDate(d)}</button>
+          <span className="text-slate-600">›</span>
+          <span className="text-slate-300">第{g.gameNo}試合</span>
+        </nav>
+        <div className="bg-slate-900 rounded-xl border border-slate-800 overflow-hidden">
+          <div className="px-4 py-3 border-b border-slate-800 flex items-center justify-between">
+            <div>
+              <p className="text-sm font-semibold text-white">{formatDate(d)} 第{g.gameNo}試合</p>
+              <p className="text-xs text-slate-600 mt-0.5">
+                {new Date(g.timestamp).toLocaleString("ja-JP", { hour: "2-digit", minute: "2-digit" })} 登録
+              </p>
+            </div>
+            <div className="flex items-center gap-3">
+              <button onClick={() => setEditing(true)}
+                className="text-xs text-emerald-400 hover:text-emerald-300 transition-colors">編集</button>
+              <button onClick={async () => { if(confirm("この対局結果を削除しますか？")) { await onDeleteGame(g.id); setSelectedGame(null); } }}
+                className="text-xs text-slate-600 hover:text-red-400 transition-colors">削除</button>
+            </div>
+          </div>
+          <div className="divide-y divide-slate-800/60">
+            {[...g.results].sort((a, b) => a.rank - b.rank).map(r => (
+              <div key={r.name} className="flex items-center gap-3 px-4 py-3">
+                <RankBadge rank={r.rank} />
+                <span className="flex-1 text-sm text-white">{r.name}</span>
+                <span className="text-sm text-slate-400">{r.score.toLocaleString()}点</span>
+                <span className={`text-sm font-bold w-14 text-right ${r.pts >= 0 ? "text-emerald-400" : "text-red-400"}`}>
+                  {r.pts >= 0 ? `+${r.pts}` : r.pts}
+                </span>
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  if (selectedDate) {
+    const dayGames = [...(byDate[selectedDate] || [])].sort((a, b) => (a.gameNo || 0) - (b.gameNo || 0));
+    return (
+      <div className="space-y-4">
+        <nav className="flex items-center gap-2 text-sm">
+          <button onClick={() => setSelectedDate(null)} className="text-emerald-400 hover:text-emerald-300">対局日一覧</button>
+          <span className="text-slate-600">›</span>
+          <span className="text-slate-300">{formatDate(selectedDate)}</span>
+        </nav>
+        <p className="text-xs text-slate-500">{dayGames.length}試合</p>
+        <div className="space-y-2">
+          {dayGames.map(g => {
+            const winner = g.results.find(r => r.rank === 1);
+            return (
+              <button key={g.id} onClick={() => setSelectedGame(g)}
+                className="w-full bg-slate-900 hover:bg-slate-800 rounded-xl border border-slate-800 hover:border-slate-700 px-4 py-3 flex items-center gap-3 transition-colors text-left">
+                <div className="w-10 h-10 rounded-lg bg-slate-800 flex items-center justify-center flex-shrink-0">
+                  <span className="text-sm font-bold text-white">{g.gameNo}</span>
+                  <span className="text-xs text-slate-500 ml-0.5">戦</span>
+                </div>
+                <div className="flex-1 min-w-0">
+                  <p className="text-sm text-white font-medium">第{g.gameNo}試合</p>
+                  <p className="text-xs text-slate-500 mt-0.5 truncate">🥇 {winner?.name} {winner?.score?.toLocaleString()}点</p>
+                </div>
+                <div className="text-right flex-shrink-0">
+                  <p className="text-xs text-slate-600">{new Date(g.timestamp).toLocaleString("ja-JP", { hour: "2-digit", minute: "2-digit" })}</p>
+                  <p className="text-slate-600 text-xs mt-1">›</p>
+                </div>
+              </button>
+            );
+          })}
+        </div>
+      </div>
+    );
+  }
+
   return (
-    <div className="flex justify-between items-center text-[10px]">
-      <span className="text-slate-600 font-bold">{label}</span>
-      <span className={`font-mono font-bold ${color}`}>{value}</span>
+    <div className="space-y-3">
+      <p className="text-xs text-slate-500">{dates.length}日分の記録</p>
+      {dates.map(d => {
+        const dayGames = byDate[d];
+        const playerMap = {};
+        dayGames.forEach(g => g.results.forEach(r => { playerMap[r.name] = (playerMap[r.name] || 0) + r.pts; }));
+        const top = Object.entries(playerMap).sort((a, b) => b[1] - a[1])[0];
+        return (
+          <button key={d} onClick={() => setSelectedDate(d)}
+            className="w-full bg-slate-900 hover:bg-slate-800 rounded-xl border border-slate-800 hover:border-slate-700 px-4 py-3.5 flex items-center gap-3 transition-colors text-left">
+            <div className="flex-1 min-w-0">
+              <p className="text-sm font-semibold text-white">{formatDate(d)}</p>
+              <p className="text-xs text-slate-500 mt-1">{dayGames.length}試合</p>
+            </div>
+            {top && (
+              <div className="text-right flex-shrink-0">
+                <p className="text-xs text-slate-400">トップ</p>
+                <p className="text-sm font-bold text-emerald-400">{top[0]}</p>
+                <p className="text-xs text-emerald-600">{top[1] >= 0 ? `+${top[1]}` : top[1]}pt</p>
+              </div>
+            )}
+            <span className="text-slate-600 text-sm ml-1">›</span>
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+// ─── Edit Game View ───────────────────────────────────────────────────────────
+function EditGameView({ game, onSave, onCancel }) {
+  const d = game.gameDate || toDateStr(game.timestamp);
+  const [gameDate, setGameDate] = useState(game.gameDate || toDateStr(game.timestamp));
+  const [gameNo, setGameNo] = useState(String(game.gameNo || ""));
+  const [scores, setScores] = useState(game.results.map(r => String(r.score)));
+  const [preview, setPreview] = useState(null);
+  const [error, setError] = useState("");
+  const [saving, setSaving] = useState(false);
+
+  const names = game.results.map(r => r.name);
+
+  useEffect(() => {
+    const nums = scores.map(s => parseInt(s, 10));
+    if (nums.some(isNaN)) { setPreview(null); setError(""); return; }
+    const total = nums.reduce((a, b) => a + b, 0);
+    if (total !== 100000) { setPreview(null); setError(`合計 ${total.toLocaleString()} 点（100,000点になるよう入力してください）`); return; }
+    setError("");
+    setPreview(calcGameResult(names.map((name, i) => ({ name, score: nums[i] }))));
+  }, [scores]);
+
+  const handleSave = async () => {
+    if (!preview) return;
+    const no = parseInt(gameNo, 10);
+    if (!gameDate || isNaN(no) || no < 1) { setError("対局日と試合番号を正しく入力してください"); return; }
+    setSaving(true);
+    await onSave({ ...game, gameDate, gameNo: no, results: preview });
+    setSaving(false);
+  };
+
+  return (
+    <div className="space-y-4">
+      <nav className="flex items-center gap-2 text-sm">
+        <button onClick={onCancel} className="text-emerald-400 hover:text-emerald-300">{formatDate(d)}</button>
+        <span className="text-slate-600">›</span>
+        <span className="text-slate-300">第{game.gameNo}試合</span>
+        <span className="text-slate-600">›</span>
+        <span className="text-amber-400">編集中</span>
+      </nav>
+
+      <section className="bg-slate-900 rounded-xl p-4 border border-amber-800/40">
+        <h2 className="text-sm font-semibold text-amber-400 uppercase tracking-wider mb-3">対局情報を編集</h2>
+        <div className="flex gap-3">
+          <div className="flex-1">
+            <label className="text-xs text-slate-500 mb-1 block">対局日</label>
+            <input type="date" value={gameDate} onChange={e => setGameDate(e.target.value)}
+              className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-amber-500"
+              style={{ colorScheme: "dark" }} />
+          </div>
+          <div className="w-24">
+            <label className="text-xs text-slate-500 mb-1 block">試合番号</label>
+            <input type="number" min="1" value={gameNo} onChange={e => setGameNo(e.target.value)}
+              className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-amber-500 text-center" />
+            <p className="text-xs text-slate-600 mt-1 text-center">試合目</p>
+          </div>
+        </div>
+      </section>
+
+      <section className="bg-slate-900 rounded-xl p-4 border border-amber-800/40">
+        <h2 className="text-sm font-semibold text-amber-400 uppercase tracking-wider mb-3">最終点数を修正</h2>
+        <div className="space-y-2">
+          {names.map((name, i) => (
+            <div key={i} className="flex items-center gap-3">
+              <label className="w-16 text-sm text-slate-400 truncate">{name}</label>
+              <input type="number" value={scores[i]}
+                onChange={e => { const n = [...scores]; n[i] = e.target.value; setScores(n); }}
+                className="flex-1 bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-amber-500" />
+            </div>
+          ))}
+        </div>
+        {error && <p className="mt-3 text-xs text-red-400 bg-red-950/40 rounded-lg px-3 py-2">{error}</p>}
+      </section>
+
+      {preview && (
+        <section className="bg-slate-900 rounded-xl border border-slate-800 overflow-hidden">
+          <div className="px-4 py-3 border-b border-slate-800">
+            <h2 className="text-sm font-semibold text-slate-300 uppercase tracking-wider">修正後プレビュー</h2>
+          </div>
+          <div className="divide-y divide-slate-800">
+            {[...preview].sort((a, b) => a.rank - b.rank).map(r => (
+              <div key={r.name} className="flex items-center gap-3 px-4 py-3">
+                <RankBadge rank={r.rank} />
+                <span className="flex-1 text-sm text-white">{r.name}</span>
+                <span className="text-sm text-slate-400">{r.score.toLocaleString()}点</span>
+                <span className={`text-sm font-bold w-14 text-right ${r.pts >= 0 ? "text-emerald-400" : "text-red-400"}`}>
+                  {r.pts >= 0 ? `+${r.pts}` : r.pts}
+                </span>
+              </div>
+            ))}
+          </div>
+        </section>
+      )}
+
+      <div className="flex gap-3">
+        <button onClick={onCancel}
+          className="flex-1 bg-slate-800 hover:bg-slate-700 text-slate-300 text-sm font-semibold rounded-lg py-2.5 transition-colors">
+          キャンセル
+        </button>
+        <button onClick={handleSave} disabled={!preview || saving}
+          className="flex-1 bg-amber-600 hover:bg-amber-500 disabled:opacity-40 text-white text-sm font-semibold rounded-lg py-2.5 transition-colors">
+          {saving ? "保存中…" : "変更を保存"}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// ─── Stats Tab ────────────────────────────────────────────────────────────────
+function StatsTab({ games, players }) {
+  if (games.length === 0) return (
+    <div className="text-center py-16 text-slate-600">
+      <p className="text-4xl mb-3">📊</p>
+      <p className="text-sm">まだ対局データがありません</p>
+    </div>
+  );
+
+  const stats = players.map(name => {
+    const participated = games.filter(g => g.results.some(r => r.name === name));
+    const count = participated.length;
+    if (count === 0) return { name, count: 0, avgRank: "-", top1Rate: "-", avgPts: "-", totalPts: 0 };
+    const results = participated.map(g => g.results.find(r => r.name === name));
+    const totalPts = results.reduce((a, r) => a + r.pts, 0);
+    return {
+      name, count,
+      avgRank: (results.reduce((a, r) => a + r.rank, 0) / count).toFixed(1),
+      top1Rate: ((results.filter(r => r.rank === 1).length / count) * 100).toFixed(0),
+      avgPts: (totalPts / count).toFixed(1),
+      totalPts,
+    };
+  });
+
+  const rankingData = [...stats].sort((a, b) => b.totalPts - a.totalPts).map((s, i) => ({ ...s, rankNum: i + 1 }));
+  const reversedGames = [...games].reverse();
+  const lineData = reversedGames.map((game, gi) => {
+    const pt = { game: `${gi + 1}` };
+    players.forEach(name => {
+      let cum = 0;
+      for (let j = 0; j <= gi; j++) {
+        const r = reversedGames[j].results.find(r => r.name === name);
+        if (r) cum += r.pts;
+      }
+      pt[name] = cum;
+    });
+    return pt;
+  });
+
+  return (
+    <div className="space-y-6">
+      <section>
+        <h2 className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-3">累計ランキング</h2>
+        <div className="space-y-2">
+          {rankingData.map(s => (
+            <div key={s.name} className="bg-slate-900 rounded-xl border border-slate-800 px-4 py-3 flex items-center gap-3">
+              <RankBadge rank={s.rankNum} />
+              <span className="flex-1 text-sm text-white font-medium">{s.name}</span>
+              <div className="text-right">
+                <p className={`text-lg font-bold ${s.totalPts >= 0 ? "text-emerald-400" : "text-red-400"}`}>
+                  {s.totalPts >= 0 ? `+${s.totalPts}` : s.totalPts}
+                </p>
+                <p className="text-xs text-slate-600">{s.count}局</p>
+              </div>
+            </div>
+          ))}
+        </div>
+      </section>
+
+      <section>
+        <h2 className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-3">累計ポイント比較</h2>
+        <div className="bg-slate-900 rounded-xl border border-slate-800 p-3">
+          <ResponsiveContainer width="100%" height={200}>
+            <BarChart data={rankingData} margin={{ top: 5, right: 10, left: -10, bottom: 0 }}>
+              <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" />
+              <XAxis dataKey="name" tick={{ fill: "#94a3b8", fontSize: 11 }} />
+              <YAxis tick={{ fill: "#94a3b8", fontSize: 11 }} />
+              <Tooltip contentStyle={{ background: "#0f172a", border: "1px solid #334155", borderRadius: 8 }}
+                labelStyle={{ color: "#e2e8f0" }} itemStyle={{ color: "#94a3b8" }} />
+              <ReferenceLine y={0} stroke="#475569" />
+              <Bar dataKey="totalPts" name="累計PT" fill="#34d399" radius={[4, 4, 0, 0]} />
+            </BarChart>
+          </ResponsiveContainer>
+        </div>
+      </section>
+
+      {reversedGames.length >= 2 && (
+        <section>
+          <h2 className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-3">累計ポイント推移</h2>
+          <div className="bg-slate-900 rounded-xl border border-slate-800 p-3">
+            <ResponsiveContainer width="100%" height={220}>
+              <LineChart data={lineData} margin={{ top: 5, right: 10, left: -10, bottom: 0 }}>
+                <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" />
+                <XAxis dataKey="game" tick={{ fill: "#94a3b8", fontSize: 11 }} />
+                <YAxis tick={{ fill: "#94a3b8", fontSize: 11 }} />
+                <Tooltip contentStyle={{ background: "#0f172a", border: "1px solid #334155", borderRadius: 8 }}
+                  labelStyle={{ color: "#e2e8f0" }} itemStyle={{ color: "#94a3b8" }} />
+                <ReferenceLine y={0} stroke="#475569" />
+                <Legend wrapperStyle={{ fontSize: 12, color: "#94a3b8" }} />
+                {players.map((name, i) => (
+                  <Line key={name} type="monotone" dataKey={name} stroke={COLORS[i % COLORS.length]}
+                    strokeWidth={2} dot={{ r: 3 }} activeDot={{ r: 5 }} />
+                ))}
+              </LineChart>
+            </ResponsiveContainer>
+          </div>
+        </section>
+      )}
+
+      <section>
+        <h2 className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-3">個人詳細</h2>
+        <div className="grid grid-cols-2 gap-3">
+          {stats.map((s, i) => (
+            <div key={s.name} className="bg-slate-900 rounded-xl border border-slate-800 p-4">
+              <div className="flex items-center gap-2 mb-3">
+                <span className="w-2.5 h-2.5 rounded-full" style={{ background: COLORS[i % COLORS.length] }} />
+                <span className="text-sm font-semibold text-white">{s.name}</span>
+              </div>
+              <div className="space-y-1.5">
+                <StatRow label="対局数" value={`${s.count}局`} />
+                <StatRow label="平均順位" value={s.count ? `${s.avgRank}位` : "–"} />
+                <StatRow label="1位率" value={s.count ? `${s.top1Rate}%` : "–"} />
+                <StatRow label="平均PT" value={s.count ? s.avgPts : "–"}
+                  color={s.count && parseFloat(s.avgPts) >= 0 ? "text-emerald-400" : "text-red-400"} />
+              </div>
+            </div>
+          ))}
+        </div>
+      </section>
+    </div>
+  );
+}
+
+// ─── Shared components ────────────────────────────────────────────────────────
+function RankBadge({ rank, small }) {
+  const colors = { 1: "bg-amber-400 text-amber-900", 2: "bg-slate-400 text-slate-900", 3: "bg-amber-700 text-amber-100", 4: "bg-slate-700 text-slate-400" };
+  const size = small ? "w-5 h-5 text-xs" : "w-6 h-6 text-xs";
+  return <span className={`${size} rounded-full font-bold flex items-center justify-center flex-shrink-0 ${colors[rank] || "bg-slate-700 text-slate-400"}`}>{rank}</span>;
+}
+function StatRow({ label, value, color }) {
+  return (
+    <div className="flex items-center justify-between">
+      <span className="text-xs text-slate-500">{label}</span>
+      <span className={`text-xs font-semibold ${color || "text-slate-200"}`}>{value}</span>
     </div>
   );
 }
