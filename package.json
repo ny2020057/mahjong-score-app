@@ -9,10 +9,12 @@
   },
   "dependencies": {
     "next": "latest",
-    "react": "19.0.0",
-    "react-dom": "19.0.0",
+    "react": "latest",
+    "react-dom": "latest",
     "@supabase/supabase-js": "latest",
     "recharts": "latest",
-    "lucide-react": "latest"
+    "lucide-react": "latest",
+    "tailwindcss": "latest",
+    "@tailwindcss/postcss": "latest"
   }
 }
