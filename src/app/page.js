@@ -49,13 +49,10 @@ export default function MahjongApp() {
   const [editPlayerName, setEditPlayerName] = useState("");
   const [loading, setLoading] = useState(true);
 
-  // Supabaseからデータ（プレイヤー・対局履歴）を取得
   const fetchData = useCallback(async () => {
-    // プレイヤー名取得
     const { data: stateData } = await supabase.from("app_state").select("*").eq("key", "players").single();
     if (stateData) setPlayers(stateData.value);
 
-    // 履歴取得
     const { data: gamesData } = await supabase.from("games").select("*").order("game_date", { ascending: false }).order("game_no", { ascending: false });
     if (gamesData) {
       const formatted = gamesData.map(g => ({
@@ -77,7 +74,6 @@ export default function MahjongApp() {
     fetchData();
   }, [fetchData]);
 
-  // リアルタイム同期設定（誰かが更新したら一瞬で全員の画面に反映される）
   useEffect(() => {
     const channel = supabase.channel("schema-db-changes")
       .on("postgres_changes", { event: "*", schema: "public", table: "games" }, () => { fetchData(); })
@@ -86,7 +82,6 @@ export default function MahjongApp() {
     return () => { supabase.removeChannel(channel); };
   }, [fetchData]);
 
-  // スコア保存
   const handleSave = async () => {
     const entries = inputs.map((inp, i) => ({ name: players[i], score: parseInt(inp.score) || 0 }));
     const total = entries.reduce((acc, e) => acc + e.score, 0);
@@ -110,7 +105,6 @@ export default function MahjongApp() {
     }
   };
 
-  // プレイヤー名変更
   const handleSavePlayerName = async () => {
     if (!editPlayerName.trim()) return;
     const next = [...players];
@@ -122,14 +116,13 @@ export default function MahjongApp() {
     }
   };
 
-  // 履歴削除
   const handleDeleteGame = async (id) => {
     if (!confirm("この対局結果を削除しますか？")) return;
     await supabase.from("games").delete().eq("id", id);
   };
 
   if (loading) {
-    return <div className="min-h-screen flex items-center justify-center bg-slate-900 text-white font-sans text-sm animate-pulse">読み込み中…</div>;
+    return <div className="min-h-screen flex items-center justify-center bg-slate-950 text-emerald-400 font-sans text-sm tracking-widest">LOADING...</div>;
   }
 
   // ─── 統計データ計算ロジック ───
@@ -178,21 +171,21 @@ export default function MahjongApp() {
   }).sort((a, b) => b.totalPts - a.totalPts);
 
   return (
-    <div className="max-w-xl mx-auto min-h-screen bg-slate-900 text-slate-100 flex flex-col shadow-2xl border-x border-slate-800/50 pb-12 font-sans">
+    <div className="max-w-md mx-auto min-h-screen bg-slate-950 text-slate-100 flex flex-col shadow-2xl pb-12 font-sans border-x border-slate-900">
       {/* ヘッダー */}
-      <header className="sticky top-0 bg-slate-900/90 backdrop-blur-md border-b border-slate-800/80 px-4 py-4 flex justify-between items-center z-40">
-        <h1 className="text-xl font-black tracking-wider text-transparent bg-clip-text bg-gradient-to-r from-emerald-400 to-teal-400">
-          🀄 麻雀スコア管理
+      <header className="sticky top-0 bg-slate-950/80 backdrop-blur-md border-b border-slate-900 px-4 py-4 flex justify-between items-center z-40">
+        <h1 className="text-lg font-black tracking-widest text-transparent bg-clip-text bg-gradient-to-r from-emerald-400 to-teal-400 font-mono">
+          MAHJONG RECORD
         </h1>
-        <span className="text-[10px] bg-slate-800/80 border border-slate-700/50 text-slate-400 px-2.5 py-1 rounded-full font-bold">LIVE同期中</span>
+        <span className="text-[10px] bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 px-2.5 py-1 rounded-full font-bold tracking-wider">LIVE</span>
       </header>
 
       {/* タブナビゲーション */}
       <nav className="px-4 mt-4">
-        <div className="bg-slate-950/60 border border-slate-800/60 p-1 rounded-xl flex gap-1 shadow-inner">
+        <div className="bg-slate-900/50 border border-slate-900 p-1 rounded-xl flex gap-1 shadow-inner">
           {TABS.map(t => (
             <button key={t} onClick={() => setActiveTab(t)}
-              className={`flex-1 text-center py-2.5 text-xs font-bold rounded-lg transition-all tracking-wide ${activeTab === t ? "bg-gradient-to-r from-emerald-500 to-teal-500 text-slate-950 font-black shadow-md shadow-emerald-500/10" : "text-slate-400 hover:text-slate-200"}`}>
+              className={`flex-1 text-center py-2 text-xs font-bold rounded-lg transition-all tracking-wider ${activeTab === t ? "bg-gradient-to-r from-emerald-500 to-teal-500 text-slate-950 font-black shadow-md shadow-emerald-500/20" : "text-slate-400 hover:text-slate-200"}`}>
               {t}
             </button>
           ))}
@@ -202,35 +195,36 @@ export default function MahjongApp() {
       <main className="flex-1 p-4">
         {/* タブ：入力 */}
         {activeTab === "入力" && (
-          <section className="space-y-5">
-            <div className="bg-slate-950/40 border border-slate-800/40 p-4 rounded-2xl flex gap-3 shadow-sm">
+          <section className="space-y-4 animate-fadeIn">
+            <div className="bg-slate-900/30 border border-slate-900 p-4 rounded-xl flex gap-3 shadow-sm">
               <div className="flex-1">
-                <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-widest mb-1">対局日</label>
+                <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-widest mb-1.5">対局日</label>
                 <input type="date" value={gameDate} onChange={(e) => setGameDate(e.target.value)}
-                  className="w-full bg-slate-900/80 border border-slate-800 rounded-xl px-3 py-2.5 text-xs text-slate-200 font-medium focus:outline-none focus:border-emerald-500 transition" />
+                  className="w-full bg-slate-950/80 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-200 font-medium focus:outline-none focus:border-emerald-500 transition" />
               </div>
               <div className="w-24">
-                <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-widest mb-1">戦目</label>
+                <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-widest mb-1.5">戦目</label>
                 <input type="number" value={gameNo} onChange={(e) => setGameNo(e.target.value)}
-                  className="w-full bg-slate-900/80 border border-slate-800 rounded-xl px-3 py-2.5 text-xs text-slate-200 font-medium text-center focus:outline-none focus:border-emerald-500 transition" />
+                  className="w-full bg-slate-950/80 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-200 font-medium text-center focus:outline-none focus:border-emerald-500 transition" />
               </div>
             </div>
 
-            <div className="space-y-3">
+            <div className="space-y-2.5">
               {inputs.map((inp, i) => (
-                <div key={i} className="bg-slate-950/40 border border-slate-800/40 p-4 rounded-2xl flex items-center justify-between shadow-sm hover:border-slate-800 transition">
+                <div key={i} className="bg-slate-900/30 border border-slate-900 p-4 rounded-xl flex items-center justify-between transition-all hover:border-slate-800">
                   <div className="flex items-center gap-3">
-                    <span className="w-2.5 h-2.5 rounded-full shadow-sm" style={{ backgroundColor: COLORS[i] }} />
+                    <span className="w-2 h-2 rounded-full shadow-sm" style={{ backgroundColor: COLORS[i] }} />
                     {editPlayerIdx === i ? (
                       <div className="flex gap-2">
                         <input type="text" value={editPlayerName} onChange={(e) => setEditPlayerName(e.target.value)}
-                          className="bg-slate-900 border border-slate-700 rounded px-2 py-1 text-xs text-white max-w-[100px]" />
+                          className="bg-slate-950 border border-slate-700 rounded px-2 py-1 text-xs text-white max-w-[100px]" />
                         <button onClick={handleSavePlayerName} className="text-xs bg-emerald-500 text-black px-2 py-1 rounded font-bold">保存</button>
                       </div>
                     ) : (
-                      <span className="text-sm font-bold text-slate-200 cursor-pointer hover:text-emerald-400"
+                      <span className="text-sm font-bold text-slate-300 cursor-pointer hover:text-emerald-400 group flex items-center gap-1.5"
                             onClick={() => { setEditPlayerIdx(i); setEditPlayerName(players[i]); }}>
-                        {players[i]} <span className="text-[10px] text-slate-600 font-normal ml-1">✏️</span>
+                        {players[i]}
+                        <span className="text-[10px] opacity-0 group-hover:opacity-100 transition-opacity text-slate-500">✏️</span>
                       </span>
                     )}
                   </div>
@@ -241,7 +235,7 @@ export default function MahjongApp() {
                         next[i].score = e.target.value;
                         setInputs(next);
                       }}
-                      className="w-32 bg-slate-900/80 border border-slate-800 rounded-xl px-4 py-2.5 text-right font-mono text-base font-bold text-slate-100 focus:outline-none focus:border-emerald-500 transition placeholder-slate-700" />
+                      className="w-28 bg-slate-950/80 border border-slate-800 rounded-lg px-3 py-2 text-right font-mono text-base font-bold text-slate-100 focus:outline-none focus:border-emerald-500 transition placeholder-slate-800" />
                     <span className="text-xs font-bold text-slate-600 font-mono w-4">点</span>
                   </div>
                 </div>
@@ -249,7 +243,7 @@ export default function MahjongApp() {
             </div>
 
             <button onClick={handleSave}
-              className="w-full bg-gradient-to-r from-emerald-500 to-teal-500 hover:from-emerald-600 hover:to-teal-600 text-slate-950 font-black py-4 rounded-2xl tracking-wider transition shadow-lg shadow-emerald-500/5 mt-2 text-sm">
+              className="w-full bg-gradient-to-r from-emerald-500 to-teal-500 hover:from-emerald-600 hover:to-teal-600 text-slate-950 font-black py-3.5 rounded-xl tracking-wider transition shadow-lg shadow-emerald-500/10 mt-2 text-sm">
               対局結果を確定
             </button>
           </section>
@@ -257,27 +251,27 @@ export default function MahjongApp() {
 
         {/* タブ：履歴 */}
         {activeTab === "履歴" && (
-          <section className="space-y-3">
+          <section className="space-y-3 animate-fadeIn">
             {games.length === 0 ? (
-              <div className="text-center py-12 text-slate-500 text-xs font-medium">対局履歴はありません</div>
+              <div className="text-center py-12 text-slate-600 text-xs font-medium tracking-wide">対局履歴はありません</div>
             ) : (
               games.map((g) => (
-                <div key={g.id} className="bg-slate-950/40 border border-slate-800/40 rounded-2xl p-4 shadow-sm relative group">
+                <div key={g.id} className="bg-slate-900/20 border border-slate-900 rounded-xl p-4 shadow-sm">
                   <div className="flex justify-between items-center mb-3 border-b border-slate-900 pb-2">
-                    <span className="text-xs font-bold font-mono text-slate-400">{g.gameDate} ［{g.gameNo}戦目］</span>
-                    <button onClick={() => handleDeleteGame(g.id)} className="text-xs text-red-400 hover:text-red-300 px-2 py-0.5 rounded bg-red-950/30 border border-red-900/30 font-medium">
+                    <span className="text-xs font-bold font-mono text-slate-500">{g.gameDate} ［{g.gameNo}戦目］</span>
+                    <button onClick={() => handleDeleteGame(g.id)} className="text-[10px] text-red-400/70 hover:text-red-400 px-2 py-0.5 rounded bg-red-950/20 border border-red-900/30 transition">
                       削除
                     </button>
                   </div>
                   <div className="grid grid-cols-2 gap-2">
                     {g.results.map((r, i) => (
-                      <div key={i} className="flex justify-between items-center bg-slate-900/40 px-3 py-2 rounded-xl border border-slate-900/50">
+                      <div key={i} className="flex justify-between items-center bg-slate-950/40 px-3 py-2 rounded-lg border border-slate-900/30">
                         <div className="flex items-center gap-2 min-w-0">
                           <RankBadge rank={r.rank} small />
                           <span className="text-xs font-bold text-slate-300 truncate">{r.name}</span>
                         </div>
                         <div className="text-right pl-2">
-                          <div className="text-[10px] font-bold font-mono text-slate-500">{r.score.toLocaleString()}</div>
+                          <div className="text-[10px] font-mono text-slate-500">{r.score.toLocaleString()}</div>
                           <div className={`text-xs font-black font-mono ${r.pts >= 0 ? "text-emerald-400" : "text-red-400"}`}>
                             {r.pts >= 0 ? `+${r.pts}` : r.pts}
                           </div>
@@ -293,57 +287,59 @@ export default function MahjongApp() {
 
         {/* タブ：統計 */}
         {activeTab === "統計" && (
-          <section className="space-y-6 pb-6">
-            <div className="bg-slate-950/30 border border-slate-800/40 rounded-2xl p-4 shadow-sm">
-              <h3 className="text-xs font-black uppercase tracking-widest text-slate-400 mb-4 border-l-2 border-emerald-500 pl-2">現在の総合ポイント</h3>
-              <div className="space-y-2.5">
+          <section className="space-y-5 animate-fadeIn pb-6">
+            {/* トータルPtランキング */}
+            <div className="bg-slate-900/20 border border-slate-900 rounded-xl p-4">
+              <h3 className="text-xs font-black uppercase tracking-widest text-slate-400 mb-3.5 border-l-2 border-emerald-500 pl-2">TOTAL POINTS</h3>
+              <div className="space-y-2">
                 {summaryStats.map((s, i) => (
-                  <div key={s.name} className="flex justify-between items-center bg-slate-900/40 px-4 py-3 rounded-xl border border-slate-900/50">
-                    <div className="flex items-center gap-3">
-                      <span className={`w-5 h-5 rounded-md flex items-center justify-center text-xs font-black ${i === 0 ? "bg-amber-400/10 text-amber-400 border border-amber-400/20" : "bg-slate-800 text-slate-400"}`}>{i + 1}</span>
-                      <span className="text-sm font-bold text-slate-200">{s.name}</span>
+                  <div key={s.name} className="flex justify-between items-center bg-slate-950/40 px-3.5 py-2.5 rounded-lg border border-slate-900/30">
+                    <div className="flex items-center gap-2.5">
+                      <span className={`w-4 h-4 rounded text-[10px] font-black flex items-center justify-center ${i === 0 ? "bg-amber-400/10 text-amber-400 border border-amber-400/20" : "bg-slate-800 text-slate-500"}`}>{i + 1}</span>
+                      <span className="text-xs font-bold text-slate-300">{s.name}</span>
                     </div>
-                    <span className={`text-sm font-mono font-black ${s.totalPts >= 0 ? "text-emerald-400" : "text-red-400"}`}>
-                      {s.totalPts >= 0 ? `+${s.totalPts}` : s.totalPts} <span className="text-[10px] text-slate-500 font-bold ml-0.5">pt</span>
+                    <span className={`text-xs font-mono font-black ${s.totalPts >= 0 ? "text-emerald-400" : "text-red-400"}`}>
+                      {s.totalPts >= 0 ? `+${s.totalPts}` : s.totalPts} <span className="text-[9px] text-slate-600 font-bold ml-0.5">pt</span>
                     </span>
                   </div>
                 ))}
               </div>
             </div>
 
+            {/* グラフ関係 */}
             {games.length > 0 && (
               <>
-                <div className="bg-slate-950/30 border border-slate-800/40 rounded-2xl p-4 shadow-sm">
-                  <h3 className="text-xs font-black uppercase tracking-widest text-slate-400 mb-4 border-l-2 border-emerald-500 pl-2">通算ポイント推移</h3>
-                  <div className="w-full h-56 text-[10px] font-mono">
+                <div className="bg-slate-900/20 border border-slate-900 rounded-xl p-4">
+                  <h3 className="text-xs font-black uppercase tracking-widest text-slate-400 mb-4 border-l-2 border-emerald-500 pl-2">POINT TIMELINE</h3>
+                  <div className="w-full h-48 text-[9px] font-mono">
                     <ResponsiveContainer width="100%" height="100%">
-                      <LineChart data={timelineData} margin={{ top: 5, right: 5, left: -25, bottom: 5 }}>
-                        <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" />
-                        <XAxis dataKey="name" stroke="#64748b" />
-                        <YAxis stroke="#64748b" />
-                        <Tooltip contentStyle={{ backgroundColor: "#020617", borderColor: "#1e293b", borderRadius: "12px", color: "#f8fafc" }} />
+                      <LineChart data={timelineData} margin={{ top: 5, right: 5, left: -30, bottom: 5 }}>
+                        <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" opacity={0.3} />
+                        <XAxis dataKey="name" stroke="#475569" />
+                        <YAxis stroke="#475569" />
+                        <Tooltip contentStyle={{ backgroundColor: "#020617", borderColor: "#1e293b", borderRadius: "8px", color: "#f8fafc" }} />
                         <Legend wrapperStyle={{ paddingTop: "10px" }} />
-                        <ReferenceLine y={0} stroke="#475569" strokeDasharray="3 3" />
+                        <ReferenceLine y={0} stroke="#475569" strokeDasharray="3 3" opacity={0.5} />
                         {players.map((p, i) => (
-                          <Line key={p} type="monotone" dataKey={p} stroke={COLORS[i]} strokeWidth={2.5} dot={{ r: 3, strokeWidth: 0 }} activeDot={{ r: 5 }} />
+                          <Line key={p} type="monotone" dataKey={p} stroke={COLORS[i]} strokeWidth={2} dot={{ r: 2 }} activeDot={{ r: 4 }} />
                         ))}
                       </LineChart>
                     </ResponsiveContainer>
                   </div>
                 </div>
 
-                <div className="bg-slate-950/30 border border-slate-800/40 rounded-2xl p-4 shadow-sm">
-                  <h3 className="text-xs font-black uppercase tracking-widest text-slate-400 mb-4 border-l-2 border-emerald-500 pl-2">順位分布</h3>
-                  <div className="w-full h-56 text-[10px] font-mono">
+                <div className="bg-slate-900/20 border border-slate-900 rounded-xl p-4">
+                  <h3 className="text-xs font-black uppercase tracking-widest text-slate-400 mb-4 border-l-2 border-emerald-500 pl-2">RANK DISTRIBUTION</h3>
+                  <div className="w-full h-48 text-[9px] font-mono">
                     <ResponsiveContainer width="100%" height="100%">
-                      <BarChart data={rankDistData} margin={{ top: 5, right: 5, left: -25, bottom: 5 }}>
-                        <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" />
-                        <XAxis dataKey="name" stroke="#64748b" />
-                        <YAxis stroke="#64748b" allowDecimals={false} />
-                        <Tooltip contentStyle={{ backgroundColor: "#020617", borderColor: "#1e293b", borderRadius: "12px" }} />
+                      <BarChart data={rankDistData} margin={{ top: 5, right: 5, left: -30, bottom: 5 }}>
+                        <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" opacity={0.3} />
+                        <XAxis dataKey="name" stroke="#475569" />
+                        <YAxis stroke="#475569" allowDecimals={false} />
+                        <Tooltip contentStyle={{ backgroundColor: "#020617", borderColor: "#1e293b", borderRadius: "8px" }} />
                         <Legend wrapperStyle={{ paddingTop: "10px" }} />
                         {players.map((p, i) => (
-                          <Bar key={p} dataKey={p} fill={COLORS[i]} radius={[4, 4, 0, 0]} />
+                          <Bar key={p} dataKey={p} fill={COLORS[i]} radius={[3, 3, 0, 0]} />
                         ))}
                       </BarChart>
                     </ResponsiveContainer>
@@ -352,14 +348,15 @@ export default function MahjongApp() {
               </>
             )}
 
-            <div className="bg-slate-950/30 border border-slate-800/40 rounded-2xl p-4 shadow-sm">
-              <h3 className="text-xs font-black uppercase tracking-widest text-slate-400 mb-4 border-l-2 border-emerald-500 pl-2">個人詳細スタッツ</h3>
-              <div className="grid grid-cols-2 gap-3">
+            {/* 詳細スタッツ */}
+            <div className="bg-slate-900/20 border border-slate-900 rounded-xl p-4">
+              <h3 className="text-xs font-black uppercase tracking-widest text-slate-400 mb-3.5 border-l-2 border-emerald-500 pl-2">DETAILS</h3>
+              <div className="grid grid-cols-2 gap-2.5">
                 {summaryStats.map((s, i) => (
-                  <div key={s.name} className="bg-slate-900/30 border border-slate-800/40 rounded-xl p-3.5 relative overflow-hidden">
-                    <div className="flex items-center gap-2 mb-2 pb-2 border-b border-slate-900">
-                      <span className="w-2 h-2 rounded-full" style={{ background: COLORS[i % COLORS.length] }} />
-                      <span className="text-xs font-bold text-white">{s.name}</span>
+                  <div key={s.name} className="bg-slate-950/50 border border-slate-900 rounded-lg p-3 relative overflow-hidden">
+                    <div className="flex items-center gap-2 mb-2 pb-1.5 border-b border-slate-900">
+                      <span className="w-1.5 h-1.5 rounded-full" style={{ background: COLORS[i % COLORS.length] }} />
+                      <span className="text-xs font-bold text-slate-200">{s.name}</span>
                     </div>
                     <div className="space-y-1">
                       <StatRow label="対局数" value={`${s.count}局`} />
@@ -379,15 +376,15 @@ export default function MahjongApp() {
 }
 
 function RankBadge({ rank, small }) {
-  const colors = { 1: "bg-amber-400 text-amber-900", 2: "bg-slate-400 text-slate-900", 3: "bg-amber-700 text-amber-100", 4: "bg-slate-700 text-slate-400" };
-  const size = small ? "w-5 h-5 text-[10px]" : "w-6 h-6 text-xs";
+  const colors = { 1: "bg-amber-400/20 text-amber-400 border border-amber-400/30", 2: "bg-slate-400/20 text-slate-300 border border-slate-400/30", 3: "bg-amber-700/20 text-amber-600 border border-amber-700/30", 4: "bg-slate-800 text-slate-500" };
+  const size = small ? "w-4 h-4 text-[9px]" : "w-5 h-5 text-xs";
   return <span className={`${size} rounded-full font-black flex items-center justify-center flex-shrink-0 ${colors[rank]}`}>{rank}</span>;
 }
 
-function StatRow({ label, value, color = "text-slate-300" }) {
+function StatRow({ label, value, color = "text-slate-400" }) {
   return (
-    <div className="flex justify-between items-center text-[11px]">
-      <span className="text-slate-500 font-bold">{label}</span>
+    <div className="flex justify-between items-center text-[10px]">
+      <span className="text-slate-600 font-bold">{label}</span>
       <span className={`font-mono font-bold ${color}`}>{value}</span>
     </div>
   );
