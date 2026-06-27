@@ -1,9 +1,12 @@
-@import "tailwindcss";
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
 
-@layer base {
-  body {
-    @apply bg-slate-950 text-slate-50 antialiased selection:bg-emerald-500/30;
-  }
+body {
+  background-color: #020617; /* slate-950 */
+  color: #f8fafc; /* slate-50 */
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
 }
 
 /* アニメーションの追加 */
